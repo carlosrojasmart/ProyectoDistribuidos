@@ -1,4 +1,5 @@
-gestion_aulas/
+
+gestion_aulas
 │── servidor.py  # Servidor central
 │── facultad.py  # Proceso que representa una facultad
 │── programa.py  # Proceso que representa un programa académico
