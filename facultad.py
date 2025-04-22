@@ -1,73 +1,91 @@
-import paramiko
-import threading
-import time
 import zmq
-from config import PUERTO_SERVIDOR
+import time
+import random
+import logging
 
-# Configuración SSH
-usuario = "estudiante"
-ip_maquina = "10.43.96.52"
-contraseña = "1Rioblanco/7"
-puerto_ssh = 22
-puerto_local = 5555
-puerto_remoto = 5555
+# Configuración básica
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("Facultad")
 
-def establecer_tunel_ssh():
-    """ Crea un túnel SSH que redirige el puerto del servidor remoto al localhost de la PC. """
-    print("🔗 Estableciendo túnel SSH...")
-    
-    cliente = paramiko.SSHClient()
-    cliente.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+# Configuración de conexión
+PUERTO_SERVIDOR = 5555
+IP_SERVIDOR = "10.43.96.52"  # Asegúrate que esta IP es correcta
+TIMEOUT = 5000  # 5 segundos en milisegundos
 
-    try:
-        cliente.connect(ip_maquina, port=puerto_ssh, username=usuario, password=contraseña)
+# Lista de facultades (una por solicitud)
+FACULTADES = [
+    "Ingeniería",
+    "Artes",
+    "Comunicacion",
+    "Derecho",
+    "Administracion",
+    "Arquitectura"
+]
+
+class Facultad:
+    def __init__(self, nombre):
+        self.nombre = nombre
+        self.contexto = zmq.Context()
+        logger.info(f" Configurando facultad {nombre}...")
+
+    def enviar_solicitud(self, num_salones, num_laboratorios):
+        """Envía una solicitud y maneja la respuesta"""
+        socket = self.contexto.socket(zmq.REQ)
+        socket.setsockopt(zmq.RCVTIMEO, TIMEOUT)
         
-        # Crear túnel SSH
-        transporte = cliente.get_transport()
-        if transporte:
-            forward_tunel = transporte.open_channel("direct-tcpip", ("localhost", puerto_remoto), ("localhost", puerto_local))
-            print("✅ Túnel SSH establecido con éxito.")
-            return cliente, forward_tunel
-        else:
-            print("❌ Error al crear el túnel SSH.")
-            return None, None
-    except Exception as e:
-        print(f"❌ Error en la conexión SSH: {e}")
-        return None, None
+        try:
+            # Conectar y enviar
+            socket.connect(f"tcp://{IP_SERVIDOR}:{PUERTO_SERVIDOR}")
+            
+            solicitud = {
+                "facultad": self.nombre,
+                "num_salones": num_salones,
+                "num_laboratorios": num_laboratorios
+            }
+            
+            logger.info(f" Enviando solicitud: {solicitud}")
+            socket.send_json(solicitud)
+            
+            # Esperar respuesta
+            respuesta = socket.recv_json()
+            logger.info(" Respuesta recibida:")
+            logger.info(f"  - Estado: {respuesta.get('status')}")
+            logger.info(f"  - Salones asignados: {respuesta.get('salones_asignados', 0)}")
+            logger.info(f"  - Laboratorios asignados: {respuesta.get('laboratorios_asignados', 0)}")
+            
+            if respuesta.get("status") == "partial":
+                logger.warning("⚠️ Asignación parcial: " + respuesta.get("message", ""))
+            
+            return respuesta
+            
+        except zmq.Again:
+            logger.error("⌛ Tiempo de espera agotado. El servidor no respondió.")
+            return None
+        except zmq.ZMQError as e:
+            logger.error(f"❌ Error de ZMQ: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error inesperado: {e}")
+            return None
+        finally:
+            socket.close()
+            time.sleep(0.1)  # Pequeña pausa entre solicitudes
 
-# Iniciar túnel SSH antes de conectarse a ZeroMQ
-cliente_ssh, tunel_ssh = establecer_tunel_ssh()
-
-# Si el túnel es exitoso, conectamos ZeroMQ
-if cliente_ssh and tunel_ssh:
-    context = zmq.Context()
-    socket = context.socket(zmq.REQ)
-    socket.connect("tcp://localhost:5555")  # Usamos localhost porque el túnel redirige
-
-    class Facultad:
-        def __init__(self, nombre):
-            print(f"Iniciando Facultad: {nombre}")
-            self.nombre = nombre
-            self.contexto = zmq.Context()
-            self.socket = self.contexto.socket(zmq.REQ)
-            self.socket.connect(f"tcp://localhost:{PUERTO_SERVIDOR}")
-            print(f"Facultad {nombre} conectada al servidor en el puerto {PUERTO_SERVIDOR}")
-
-        def solicitar_aulas(self, num_salones, num_laboratorios):
-            solicitud = (self.nombre, num_salones, num_laboratorios)
-            print(f"Facultad {self.nombre} enviando solicitud: {solicitud}")
-            self.socket.send(str(solicitud).encode())
-
-            print(f"Facultad {self.nombre} esperando respuesta...")
-            respuesta = self.socket.recv()
-            print(f"Facultad {self.nombre} recibió respuesta: {respuesta.decode()}")
-
-    if __name__ == "__main__":
-        facultad = Facultad("Ingeniería")
-        facultad.solicitar_aulas(8, 3)
-
-    # Cerrar la conexión SSH después de ejecutar
-    tunel_ssh.close()
-    cliente_ssh.close()
-else:
-    print("⚠ No se pudo establecer el túnel SSH, cerrando programa.")
+if __name__ == "__main__":
+    # Enviar 5 solicitudes, cada una con una facultad aleatoria
+    for i in range(1, 6):
+        # Seleccionar una facultad aleatoria para cada solicitud
+        facultad_nombre = random.choice(FACULTADES)
+        facultad = Facultad(facultad_nombre)
+        
+        # Generar números aleatorios para salones y laboratorios
+        salones = random.randint(1, 10)
+        laboratorios = random.randint(1, 4)
+        
+        logger.info(f"\n=== Solicitud #{i} ({facultad_nombre}) ===")
+        respuesta = facultad.enviar_solicitud(salones, laboratorios)
+        
+        if respuesta is None:
+            logger.warning("La solicitud no pudo ser procesada")
+        
+        time.sleep(1)  # Espera entre solicitudes
