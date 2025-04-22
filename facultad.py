@@ -9,7 +9,7 @@ logger = logging.getLogger("Facultad")
 
 # Configuración de conexión
 PUERTO_SERVIDOR = 5555
-IP_SERVIDOR = "10.43.96.52"  # Asegúrate que esta IP es correcta
+IP_SERVIDOR = "10.43.96.52"  
 TIMEOUT = 5000  # 5 segundos en milisegundos
 
 # Lista de facultades (una por solicitud)
